@@ -15,14 +15,13 @@ RUN wget https://github.com/pocketbase/pocketbase/releases/download/v${VERSION}/
 # Stage 2: Build the final image
 FROM alpine:3
 
-# Runtime environment variables (can be overridden in your deployment)
+# Runtime environment variables (can be overridden at deployment)
 ENV MINIO_ENDPOINT="http://minio.example.com:9000" \
     MINIO_BUCKET="pocketbase" \
     MINIO_ACCESS_KEY="admin" \
     MINIO_SECRET_KEY="password123" \
     PB_PORT=8090 \
     DEV_MODE="false" \
-    # Ensure these are available at runtime:
     PB_BASE_DIR="/mnt/minio" \
     PB_DATA_DIR="/mnt/minio/data" \
     PB_PUBLIC_DIR="/mnt/minio/public" \
@@ -30,6 +29,7 @@ ENV MINIO_ENDPOINT="http://minio.example.com:9000" \
     PB_MIGRATIONS_DIR="/mnt/minio/migrations"
 
 # Install dependencies
+# Note: "mailcap" is installed so that a basic /etc/mime.types is available.
 RUN apk update && apk add --no-cache \
     ca-certificates \
     wget \
@@ -39,12 +39,17 @@ RUN apk update && apk add --no-cache \
     fuse3 \
     s3fs-fuse \
     supervisor \
+    mailcap \
     && rm -rf /var/cache/apk/*
 
-# Create required directories (including the mount base directory)
+# Create required directories (including the mount point)
 RUN mkdir -p "$PB_BASE_DIR" "$PB_DATA_DIR" "$PB_PUBLIC_DIR" "$PB_HOOKS_DIR" "$PB_MIGRATIONS_DIR" /etc/supervisor.d
 
-# Copy the PocketBase binary from the downloader stage
+# Optionally, if you prefer your own MIME types file, uncomment the following line
+# and place your mime.types file in the build context.
+# COPY mime.types /etc/mime.types
+
+# Copy PocketBase binary from the downloader stage
 COPY --from=downloader /pocketbase /usr/local/bin/pocketbase
 
 # Copy the external entrypoint and supervisor configuration files
@@ -53,7 +58,7 @@ RUN chmod +x /entrypoint.sh
 
 COPY supervisor.conf /etc/supervisor.conf
 
-# Expose the PocketBase port
+# Expose PocketBase port
 EXPOSE ${PB_PORT}
 
 # Set the custom entrypoint
