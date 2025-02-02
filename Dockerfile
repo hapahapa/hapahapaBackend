@@ -21,14 +21,10 @@ ENV MINIO_BUCKET="pocketbase"
 ENV MINIO_ACCESS_KEY="admin"
 ENV MINIO_SECRET_KEY="password123"
 ENV PB_BASE_DIR="/mnt/minio"
-ENV PB_DATA_DIR="${PB_BASE_DIR}/data"
-ENV PB_PUBLIC_DIR="${PB_BASE_DIR}/public"
-ENV PB_HOOKS_DIR="${PB_BASE_DIR}/hooks"
-ENV PB_MIGRATIONS_DIR="${PB_BASE_DIR}/migrations"
 ENV PB_PORT=8090
 ENV DEV_MODE="false"
 
-# Install dependencies (s3fs-fuse instead of s3fs)
+# Install dependencies (fixing s3fs issue)
 RUN apk update && apk add --no-cache \
     ca-certificates \
     wget \
@@ -40,8 +36,8 @@ RUN apk update && apk add --no-cache \
     supervisor \
     && rm -rf /var/cache/apk/*
 
-# Create necessary directories
-RUN mkdir -p ${PB_DATA_DIR} ${PB_PUBLIC_DIR} ${PB_HOOKS_DIR} ${PB_MIGRATIONS_DIR} /etc/supervisor.d
+# ✅ Fix: Create static directory paths (no ENV usage at build time)
+RUN mkdir -p /mnt/minio/data /mnt/minio/public /mnt/minio/hooks /mnt/minio/migrations /etc/supervisor.d
 
 # Copy PocketBase binary
 COPY --from=downloader /pocketbase /usr/local/bin/pocketbase
@@ -70,7 +66,7 @@ chmod 600 /etc/passwd-s3fs
 s3fs "\$MINIO_BUCKET" "\$PB_BASE_DIR" -o url="\$MINIO_ENDPOINT" -o use_path_request_style -o allow_other \$S3FS_DEBUG_FLAGS
 
 # Ensure all directories exist inside the MinIO bucket
-mkdir -p "\$PB_DATA_DIR" "\$PB_PUBLIC_DIR" "\$PB_HOOKS_DIR" "\$PB_MIGRATIONS_DIR"
+mkdir -p "\$PB_BASE_DIR/data" "\$PB_BASE_DIR/public" "\$PB_BASE_DIR/hooks" "\$PB_BASE_DIR/migrations"
 
 # Start Supervisor (manages s3fs and PocketBase)
 exec /usr/bin/supervisord -c /etc/supervisor.conf
@@ -84,7 +80,7 @@ COPY <<EOF /etc/supervisor.conf
 nodaemon=true
 
 [program:pocketbase]
-command=/usr/local/bin/pocketbase serve --http=0.0.0.0:\$PB_PORT --dir=\$PB_DATA_DIR --publicDir=\$PB_PUBLIC_DIR --hooksDir=\$PB_HOOKS_DIR --migrationsDir=\$PB_MIGRATIONS_DIR --logLevel=\$PB_LOG_LEVEL
+command=/usr/local/bin/pocketbase serve --http=0.0.0.0:\$PB_PORT --dir=\$PB_BASE_DIR/data --publicDir=\$PB_BASE_DIR/public --hooksDir=\$PB_BASE_DIR/hooks --migrationsDir=\$PB_BASE_DIR/migrations --logLevel=\$PB_LOG_LEVEL
 autostart=true
 autorestart=true
 stderr_logfile=/dev/stderr
