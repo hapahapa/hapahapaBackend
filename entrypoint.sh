@@ -16,9 +16,14 @@ fi
 echo "$MINIO_ACCESS_KEY:$MINIO_SECRET_KEY" > /etc/passwd-s3fs
 chmod 600 /etc/passwd-s3fs
 
-# Mount the MinIO bucket using s3fs with optional debug flags.
-# Note: Ensure the mount point directory ($PB_BASE_DIR) exists.
-s3fs "$MINIO_BUCKET" "$PB_BASE_DIR" -o url="$MINIO_ENDPOINT" -o use_path_request_style -o allow_other $S3FS_DEBUG_FLAGS
+# Mount the MinIO bucket using s3fs
+# The additional "-o nonempty" option allows mounting on a directory that is not empty.
+s3fs "$MINIO_BUCKET" "$PB_BASE_DIR" \
+  -o url="$MINIO_ENDPOINT" \
+  -o use_path_request_style \
+  -o allow_other \
+  -o nonempty \
+  $S3FS_DEBUG_FLAGS
 
 # Ensure all required directories exist inside the mounted bucket
 mkdir -p "$PB_DATA_DIR" "$PB_PUBLIC_DIR" "$PB_HOOKS_DIR" "$PB_MIGRATIONS_DIR"
