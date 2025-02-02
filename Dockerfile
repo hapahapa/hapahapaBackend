@@ -10,19 +10,25 @@ ENV BUILDX_ARCH="${TARGETOS}_${TARGETARCH}${TARGETVARIANT}"
 
 RUN wget https://github.com/pocketbase/pocketbase/releases/download/v${VERSION}/pocketbase_${VERSION}_${BUILDX_ARCH}.zip \
     && unzip pocketbase_${VERSION}_${BUILDX_ARCH}.zip \
-    && chmod +x /pocketbase
+    && chmod +x pocketbase
 
 # Stage 2: Build the final image
 FROM alpine:3
 
-# Set environment variables for MinIO storage & logging
+# Set environment variables for runtime (these are used at runtime, NOT build time)
 ENV MINIO_ENDPOINT="http://minio.example.com:9000"
 ENV MINIO_BUCKET="pocketbase"
 ENV MINIO_ACCESS_KEY="admin"
 ENV MINIO_SECRET_KEY="password123"
-ENV PB_BASE_DIR="/mnt/minio"
 ENV PB_PORT=8090
 ENV DEV_MODE="false"
+
+# Define static variables (used during build time)
+ARG PB_BASE_DIR="/mnt/minio"
+ARG PB_DATA_DIR="/mnt/minio/data"
+ARG PB_PUBLIC_DIR="/mnt/minio/public"
+ARG PB_HOOKS_DIR="/mnt/minio/hooks"
+ARG PB_MIGRATIONS_DIR="/mnt/minio/migrations"
 
 # Install dependencies (fixing s3fs issue)
 RUN apk update && apk add --no-cache \
@@ -36,10 +42,10 @@ RUN apk update && apk add --no-cache \
     supervisor \
     && rm -rf /var/cache/apk/*
 
-# ✅ Fix: Create static directory paths (no ENV usage at build time)
-RUN mkdir -p /mnt/minio/data /mnt/minio/public /mnt/minio/hooks /mnt/minio/migrations /etc/supervisor.d
+# ✅ Fix: Create directories using static paths
+RUN mkdir -p "$PB_DATA_DIR" "$PB_PUBLIC_DIR" "$PB_HOOKS_DIR" "$PB_MIGRATIONS_DIR" /etc/supervisor.d
 
-# Copy PocketBase binary
+# Copy PocketBase binary (ensure build args are set)
 COPY --from=downloader /pocketbase /usr/local/bin/pocketbase
 
 # Add startup script
@@ -63,10 +69,10 @@ echo "\$MINIO_ACCESS_KEY:\$MINIO_SECRET_KEY" > /etc/passwd-s3fs
 chmod 600 /etc/passwd-s3fs
 
 # Mount MinIO bucket using s3fs with optional debug flags
-s3fs "\$MINIO_BUCKET" "\$PB_BASE_DIR" -o url="\$MINIO_ENDPOINT" -o use_path_request_style -o allow_other \$S3FS_DEBUG_FLAGS
+s3fs "\$MINIO_BUCKET" "$PB_BASE_DIR" -o url="\$MINIO_ENDPOINT" -o use_path_request_style -o allow_other \$S3FS_DEBUG_FLAGS
 
 # Ensure all directories exist inside the MinIO bucket
-mkdir -p "\$PB_BASE_DIR/data" "\$PB_BASE_DIR/public" "\$PB_BASE_DIR/hooks" "\$PB_BASE_DIR/migrations"
+mkdir -p "$PB_DATA_DIR" "$PB_PUBLIC_DIR" "$PB_HOOKS_DIR" "$PB_MIGRATIONS_DIR"
 
 # Start Supervisor (manages s3fs and PocketBase)
 exec /usr/bin/supervisord -c /etc/supervisor.conf
@@ -80,7 +86,7 @@ COPY <<EOF /etc/supervisor.conf
 nodaemon=true
 
 [program:pocketbase]
-command=/usr/local/bin/pocketbase serve --http=0.0.0.0:\$PB_PORT --dir=\$PB_BASE_DIR/data --publicDir=\$PB_BASE_DIR/public --hooksDir=\$PB_BASE_DIR/hooks --migrationsDir=\$PB_BASE_DIR/migrations --logLevel=\$PB_LOG_LEVEL
+command=/usr/local/bin/pocketbase serve --http=0.0.0.0:\$PB_PORT --dir=$PB_DATA_DIR --publicDir=$PB_PUBLIC_DIR --hooksDir=$PB_HOOKS_DIR --migrationsDir=$PB_MIGRATIONS_DIR --logLevel=\$PB_LOG_LEVEL
 autostart=true
 autorestart=true
 stderr_logfile=/dev/stderr
