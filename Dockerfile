@@ -4,9 +4,9 @@ FROM alpine:3 AS downloader
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 ARG TARGETVARIANT=""
-ARG VERSION=0.25.0
+ARG VERSION=0.25.0  # Set default version
 
-ENV BUILDX_ARCH="${TARGETOS:-linux}_${TARGETARCH:-amd64}${TARGETVARIANT}"
+ENV BUILDX_ARCH="${TARGETOS}_${TARGETARCH}${TARGETVARIANT}"
 
 RUN wget https://github.com/pocketbase/pocketbase/releases/download/v${VERSION}/pocketbase_${VERSION}_${BUILDX_ARCH}.zip \
     && unzip pocketbase_${VERSION}_${BUILDX_ARCH}.zip \
@@ -28,19 +28,20 @@ ENV PB_MIGRATIONS_DIR="${PB_BASE_DIR}/migrations"
 ENV PB_PORT=8090
 ENV DEV_MODE="false"
 
-# Install necessary dependencies
+# Install dependencies (s3fs-fuse instead of s3fs)
 RUN apk update && apk add --no-cache \
     ca-certificates \
     wget \
     unzip \
     bash \
     curl \
-    fuse \
-    s3fs \
+    fuse3 \
+    s3fs-fuse \
+    supervisor \
     && rm -rf /var/cache/apk/*
 
 # Create necessary directories
-RUN mkdir -p ${PB_DATA_DIR} ${PB_PUBLIC_DIR} ${PB_HOOKS_DIR} ${PB_MIGRATIONS_DIR}
+RUN mkdir -p ${PB_DATA_DIR} ${PB_PUBLIC_DIR} ${PB_HOOKS_DIR} ${PB_MIGRATIONS_DIR} /etc/supervisor.d
 
 # Copy PocketBase binary
 COPY --from=downloader /pocketbase /usr/local/bin/pocketbase
@@ -71,11 +72,24 @@ s3fs "\$MINIO_BUCKET" "\$PB_BASE_DIR" -o url="\$MINIO_ENDPOINT" -o use_path_requ
 # Ensure all directories exist inside the MinIO bucket
 mkdir -p "\$PB_DATA_DIR" "\$PB_PUBLIC_DIR" "\$PB_HOOKS_DIR" "\$PB_MIGRATIONS_DIR"
 
-# Start PocketBase with log level
-exec /usr/local/bin/pocketbase serve --http=0.0.0.0:\$PB_PORT --dir="\$PB_DATA_DIR" --publicDir="\$PB_PUBLIC_DIR" --hooksDir="\$PB_HOOKS_DIR" --migrationsDir="\$PB_MIGRATIONS_DIR" --logLevel="\$PB_LOG_LEVEL"
+# Start Supervisor (manages s3fs and PocketBase)
+exec /usr/bin/supervisord -c /etc/supervisor.conf
 EOF
 
 RUN chmod +x /entrypoint.sh
+
+# Supervisor configuration for managing processes
+COPY <<EOF /etc/supervisor.conf
+[supervisord]
+nodaemon=true
+
+[program:pocketbase]
+command=/usr/local/bin/pocketbase serve --http=0.0.0.0:\$PB_PORT --dir=\$PB_DATA_DIR --publicDir=\$PB_PUBLIC_DIR --hooksDir=\$PB_HOOKS_DIR --migrationsDir=\$PB_MIGRATIONS_DIR --logLevel=\$PB_LOG_LEVEL
+autostart=true
+autorestart=true
+stderr_logfile=/dev/stderr
+stdout_logfile=/dev/stdout
+EOF
 
 # Expose PocketBase port
 EXPOSE ${PB_PORT}
